@@ -10,6 +10,7 @@ import multiprocessing
 import argparse
 
 def read(filelist):
+    # Reads data in
     data = []
     for f in sorted(filelist):
         x = np.load(f)
@@ -20,6 +21,8 @@ def read(filelist):
     return data
 
 def reduce_dataset(events, fraction=0.1):
+    # Reduces fraction of events in dataset
+    # Useful for speeding up computations if slow
     assert(fraction > 0)
     if fraction >= 1:
         return events.copy()
@@ -30,12 +33,15 @@ def reduce_dataset(events, fraction=0.1):
         new_events['ow'] /= fraction
     return new_events
 
+
 def to_unit_vector(ra, dec):
+    # These are some functions for converting ra/dec info into angular distance
     return np.array([np.cos(ra)*np.cos(dec),
                      np.sin(ra)*np.cos(dec),
                      np.sin(dec)])
 
-def angular_distance(ra_A, dec_A, ra_B, dec_B): 
+def angular_distance(ra_A, dec_A, ra_B, dec_B):
+    # These are some functions for converting ra/dec info into angular distance
     unit_A = to_unit_vector(ra_A, dec_A)
     unit_B = to_unit_vector(ra_B, dec_B)
     
@@ -45,6 +51,7 @@ def angular_distance(ra_A, dec_A, ra_B, dec_B):
         return np.arccos(np.dot(unit_A, unit_B))
 
 def rotate(ra1, dec1, ra2, dec2, ra3, dec3):
+    # These are some functions for converting ra/dec info into angular distance
     r"""Rotation matrix for rotation of (ra1, dec1) onto (ra2, dec2).
     The rotation is performed on (ra3, dec3).
 
@@ -243,13 +250,20 @@ class gauss_profile(generic_profile):
         """
         return [-np.inf, np.inf]
     
+
 class spline_profile(generic_profile):
+    # Class for spline profile
     
     def __init__(self, spline, start, end):
+        # Takes as parameters the univariate light-curve spline, and the start/end times of the flare
         self.spline = spline
         self.start_time = start
         self.end_time = end
+        
+        # Define a list of times between the start and end times for random sampling
         self.time_list = np.linspace(self.start_time, self.end_time, 100000)
+        
+        # These next few parameters are necesasry for calculating the effective exposure
         self.roots = self.spline.derivative().roots()
         self.roots = np.append(self.roots, [self.start_time])
         self.roots = np.append(self.roots, [self.end_time])
@@ -259,30 +273,39 @@ class spline_profile(generic_profile):
         self.vals = self.spline(self.roots)
         self.norm = self.spline.integral(self.start_time, self.end_time)
         self.thing = np.max(self.vals)/self.norm
+        
+        # Define some parameters useful for random sampling
         self.hist = np.cumsum(self.pdf(self.time_list))
         self.hist /= self.hist.max()
         self.sample_spline = scipy.interpolate.UnivariateSpline(self.hist, self.time_list, k = 1)
+        
+        # This last parameter is used in some of the stacked weighting schemes
         self.max = np.max(self.vals)
         
     def pdf(self, times):
+        # Calculates probability density for each time
         p = self.spline(times)/self.norm
         p[times<self.start_time] = 0
         p[times>self.end_time] = 0
         return p
         
     def logpdf(self, times):
+        # Calculates log of the pdf for each time
         return np.log(self.pdf(times))
     
     def random(self, n):
+        # randomly samples n times from spline
         self.uniform = np.random.uniform(0, 1, n)
         return self.sample_spline(self.uniform)
     
     def effective_exposure(self):
+        # Return the effective exposure
         return 1.0/self.thing
     
     def get_range(self):
+        # Return the start/end time of the flare
         return [self.start_time, self.end_time]
-    
+
 def select_and_weight(sim,
                       N=0,
                       gamma=-2,
@@ -291,6 +314,7 @@ def select_and_weight(sim,
                       time_profile = None,
                       sampling_width = np.radians(1),
                      ):
+    # This weights the MC simulation based on a particular flux N and spectral index gamma
     assert('ow' in sim.dtype.names)
     assert(time_profile != None)
 
@@ -339,6 +363,7 @@ def produce_trial(data,
                   random_seed = None,
                   signal_weights = None,
                   return_signal_weights = False):
+    #This produces trial datasets
     assert(background_window > 0)
     assert(signal_time_profile != None)
     assert(background_time_profile != None)
@@ -455,10 +480,11 @@ def produce_trial(data,
         return events, reduced_sim
     else:
         return events
-    
+
 def signal_pdf(event,
                test_ra, 
-               test_dec):    
+               test_dec):
+    # Defines the spatial signal pdf for eah event
     sigma = event['angErr']
     x = angular_distance(event['ra'], event['dec'], 
                          test_ra, test_dec)
@@ -499,7 +525,8 @@ def get_energy_splines(events,
 def get_energy_sob(events,
                    gamma,
                    splines):
-    
+    # Given energy splines, returns signal-over-background
+    # energy pdf for each event
     final_sob_ratios = np.ones_like(events, dtype=float)
     for i, spline in enumerate(splines):
         final_sob_ratios[i] = np.exp(spline(gamma))
@@ -510,6 +537,7 @@ def background_pdf(event,
                    test_ra, 
                    test_dec,
                    bg_p_dec):
+    # Calculates background spatial pdf
     background_likelihood = (1/(2*np.pi))*bg_p_dec(np.sin(event['dec']))
     return background_likelihood
 
@@ -534,7 +562,8 @@ def evaluate_ts_uniform(events,
                 'gamma':gamma,
                 't_start':t0 - tw/2,
                 't_end':t0 + tw/2}
-        
+    
+    # If no flux, do nothing
     N = len(events)
     if N==0: 
         return output
@@ -543,6 +572,7 @@ def evaluate_ts_uniform(events,
     if ns >= N: 
         ns = N - 0.00001
 
+    # Define signal and background pdfs
     S = signal_pdf(events, test_ra, test_dec)
     B = background_pdf(events, test_ra, test_dec, bg_p_dec)
     keep = (S > 0)
@@ -550,13 +580,16 @@ def evaluate_ts_uniform(events,
     S = S[keep]
     B = B[keep]
     
+    #Define background time pdf from background time profile
     t_lh_background = background_time_profile.pdf(events['time'])
     
+    #Get energy splines
     splines = get_energy_splines(events, gamma_points = gamma_points, ratio_bins = ratio_bins, sob_maps = sob_maps)
     
     #def constraint(x):
         #return (x[2] <= x[1]).astype(float)
-        
+    
+    #Get range of background times
     T = background_time_profile.effective_exposure()
     
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -568,6 +601,7 @@ def evaluate_ts_uniform(events,
         # the other parameters are found. Doing it this way
         # speeds things up by a factor of ~2.5x
         def get_inner_ts(params):
+            # Minimize parameters other than ns
             gamma, param1, param2 = params
             param1 += background_time_profile.start_time
             param2 += background_time_profile.start_time
@@ -699,7 +733,7 @@ def evaluate_ts_gauss(events,
             ts = ts[ts != 0]
             if len(ts) == 0:
                 return 100000
-            #Adjust ts calculation for Tw/T
+            # Adjust ts calculation for Tw/T
             return -2*np.sum(np.log(ts))
 
         # This one will only fit ns
@@ -779,6 +813,7 @@ def evaluate_ts_spline(events,
                 't_end':signal_time_profile.end_time,
                 't_offset':offset}
         
+    # If no events, don't bother minimizing
     N = len(events)
     if N==0: 
         return output
@@ -787,6 +822,7 @@ def evaluate_ts_spline(events,
     if ns >= N: 
         ns = N - 0.00001
 
+    # Define your signal and background spatial pdfs
     S = signal_pdf(events, test_ra, test_dec)
     B = background_pdf(events, test_ra, test_dec, bg_p_dec)
     keep = (S > 0)
@@ -794,8 +830,10 @@ def evaluate_ts_spline(events,
     S = S[keep]
     B = B[keep]
     
+    # Define background time pdf
     t_lh_background = background_time_profile.pdf(events['time'])
     
+    # Define signal-over-background energy splines
     splines = get_energy_splines(events, gamma_points = gamma_points, ratio_bins = ratio_bins, sob_maps = sob_maps)
     
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -807,13 +845,15 @@ def evaluate_ts_spline(events,
         # the other parameters are found. Doing it this way
         # speeds things up by a factor of ~2.5x
         def get_inner_ts(params):
+            # Minimize secondary parameters (gamma, offset)
             gamma = params[0]
-            e_lh_ratio = get_energy_sob(events, gamma, splines)
-            t_lh_signal = signal_time_profile.pdf(events['time'] + params[1])
+            e_lh_ratio = get_energy_sob(events, gamma, splines) # signal-over-background energy pdf
+            t_lh_signal = signal_time_profile.pdf(events['time'] + params[1]) # signal time pdf
             sob = S/B*e_lh_ratio * (t_lh_signal/t_lh_background)
             ts = (1/N*(sob - 1))+1
-            ts = ts[ts != 0]
+            ts = ts[ts != 0] # eliminate zeroes from ts values
             if len(ts) == 0:
+                #If no ts values remaining, penalize heavily in minimizer
                 return 100000
             return -2*np.sum(np.log(ts))
 
@@ -826,11 +866,11 @@ def evaluate_ts_spline(events,
         if minimize:
             # Set the seed values, which tell the minimizer
             # where to start, and the bounds. First do the
-            # shape parameters (just gamma, in this case).
+            # shape parameters
             t_range = signal_time_profile.get_range()[1] - signal_time_profile.get_range()[0]
-            x0 = [gamma, offset]
-            bounds = [[-4, -1], #gamma [min, max]
-                      [-2 * t_range, 2 * t_range]] #offset [min, max]
+            x0 = [gamma, offset] # initial values
+            bounds = [[-4, -1], # gamma [min, max]
+                      [-2 * t_range, 2 * t_range]] # offset [min, max]
             bf_params = scipy.optimize.minimize(get_inner_ts,
                                                 x0 = x0,
                                                 bounds = bounds,
@@ -839,8 +879,8 @@ def evaluate_ts_spline(events,
             # and now set up the fit for ns
             x0 = [ns,]
             bounds = [[0, N],] 
-            e_lh_ratio = get_energy_sob(events, bf_params.x[0], splines)
-            t_lh_signal = signal_time_profile.pdf(events['time'] + bf_params.x[1])
+            e_lh_ratio = get_energy_sob(events, bf_params.x[0], splines) # energy likelihood for minimized parameters
+            t_lh_signal = signal_time_profile.pdf(events['time'] + bf_params.x[1]) #time likelihood for minimized parameters
             sob = S/B*e_lh_ratio * (t_lh_signal/t_lh_background)
 
             result = scipy.optimize.minimize(get_ts,
@@ -1030,6 +1070,7 @@ def complete_trial(ntrials):
     fit_info = []
     np.random.seed()
     
+    # Produce a trial
     trial = produce_trial(data,
                           reduced_sim,
                           grl,
@@ -1045,6 +1086,7 @@ def complete_trial(ntrials):
                           signal_weights = None, 
                           return_signal_weights = False)
     
+    # Cut trial to certain angular window
     keep = (np.abs(trial['ra'] - test_ra) <  angular_window) & (np.abs(trial['dec'] - test_dec) < angular_window)
     trial = trial[keep]
     
@@ -1102,6 +1144,7 @@ def complete_trial(ntrials):
         return bestfit['ts'], len(trial), (trial['run']>200000).sum(), bestfit['ns'], bestfit['gamma'], bestfit['t_start'], bestfit['t_end']
 
 def produce_flux(analysis_times, flux_spline, scheme):
+    # Obtain weights for stacked fluxes
     fluxes = np.zeros(len(analysis_times))
     if scheme == 0: #uniform weighting
         for i in range(0, len(analysis_times)):
@@ -1166,7 +1209,8 @@ def produce_trials_stacked(ntrials,
                      verbose = True,
                      ncpus = 4,
                      nflares = 9):
-      
+    
+    # Does Stacked trials instead of unstacked trials
     if random_seed:
         np.random.seed(random_seed)
 
@@ -1257,7 +1301,10 @@ def stacked_trial(ntrials):
     fit_info = np.zeros(nflares, dtype = dtype)
     
     for i in range(0, nflares):
+    # Do this for every flare, add ts values at the end
         np.random.seed()
+        
+        # Define time profiles for flare
         background_time_profile = uniform_profile(analysis_times['start'][i], analysis_times['end'][i])
         signal_time_profile = spline_profile(flux_spline, analysis_times['start'][i], analysis_times['end'][i])
         
@@ -1279,7 +1326,7 @@ def stacked_trial(ntrials):
                                         sim = sim,
                                         sampling_width = sampling_width,
                                         )
-        
+        # Produce a trial
         trial = produce_trial(data,
                           reduced_sim,
                           grl,
@@ -1295,6 +1342,7 @@ def stacked_trial(ntrials):
                           signal_weights = None, 
                           return_signal_weights = False)
     
+        # Cut the trial dataset
         keep = (np.abs(trial['ra'] - test_ra) <  angular_window) & (np.abs(trial['dec'] - test_dec) < angular_window)
         trial = trial[keep]
         
@@ -1360,6 +1408,7 @@ def stacked_trial(ntrials):
             fit_info[i]['t_start'] = bestfit['t_start']
             fit_info[i]['t_end'] = bestfit['t_end']
             
+    #ts values need to be summed together outside this function
     ts = fit_info['ts']
     ntot = fit_info['ntot']
     ninj = fit_info['ninj']

@@ -107,5 +107,4 @@ args = {"gamma_points":gamma_points,
 
 for i in range(0, len(N_vals)):
     analysis_fits = analysis_functions.produce_trials_multi(number, N = N_vals[i], **args)
-    analysis_ts = np.array(analysis_fits['ts'])
-    np.save(outdir + '/outputs/analysis_job_' + str(i) + '_flare_' + str(F)  + '_offset.npy', analysis_fits)
+    np.save(outdir + '/outputs_final/analysis_job_' + str(i) + '_flare_' + str(F)  + '.npy', analysis_fits)

@@ -262,6 +262,7 @@ class spline_profile(generic_profile):
         self.hist = np.cumsum(self.pdf(self.time_list))
         self.hist /= self.hist.max()
         self.sample_spline = scipy.interpolate.UnivariateSpline(self.hist, self.time_list, k = 1)
+        self.max = np.max(self.vals)
         
     def pdf(self, times):
         p = self.spline(times)/self.norm
@@ -952,9 +953,6 @@ def produce_trials_multi(ntrials,
                                         sim = reduced_sim,
                                         sampling_width = sampling_width,
                                         )
-
-    data_keep = (np.abs(data['dec'] - test_dec) < angular_window)
-    data = data[data_keep]
     
     # Build a place to store information for the trial
     if gauss:
@@ -1102,3 +1100,282 @@ def complete_trial(ntrials):
         return bestfit['ts'], len(trial), (trial['run']>200000).sum(), bestfit['ns'], bestfit['gamma'], bestfit['t_start'], bestfit['t_end'], bestfit['t_offset']
     else:
         return bestfit['ts'], len(trial), (trial['run']>200000).sum(), bestfit['ns'], bestfit['gamma'], bestfit['t_start'], bestfit['t_end']
+
+def produce_flux(analysis_times, flux_spline, scheme):
+    fluxes = np.zeros(len(analysis_times))
+    if scheme == 0: #uniform weighting
+        for i in range(0, len(analysis_times)):
+            fluxes[i] = 1/len(analysis_times)
+    elif scheme == 1: #length weighting
+        for i in range(0, len(analysis_times)):
+            sig = spline_profile(flux_spline, analysis_times['start'][i], analysis_times['end'][i])
+            flux = sig.get_range()[1] = sig.get_range()[0]
+            fluxes[i] = flux
+    elif scheme == 3: #peak flux weighting
+        for i in range(0, len(analysis_times)):
+            sig = spline_profile(flux_spline, analysis_times['start'][i], analysis_times['end'][i])
+            flux = sig.max
+            fluxes[i] = flux
+    else: #time-integrated flux weighting
+        for i in range(0, len(analysis_times)):
+            sig = spline_profile(flux_spline, analysis_times['start'][i], analysis_times['end'][i])
+            flux = sig.norm
+            fluxes[i] = flux
+    total_flux = np.sum(fluxes)
+    fluxes /= total_flux
+    return fluxes
+    
+def produce_trials_stacked(ntrials,
+                     
+                     gamma_points,
+                     ratio_bins,
+                     sob_maps,
+                     data, 
+                     sim,
+                     bg_p_dec,
+                     grl,
+                     analysis_times,
+                     flux_spline,
+                     flux_weights,
+                     
+                     # Signal flux parameters
+                     N = 0, 
+                     gamma = -2,
+                     t0 = 56102.5,
+                     tw = 1000.0/(3600.0 * 24),
+                     offset = 0,
+                     source_ra = np.pi/2, 
+                     source_dec = np.pi/6, 
+                     sampling_width = np.radians(5),
+                     angular_window = np.radians(10),
+                     reduced_sim = None,
+
+                     # Estimate the background rate over this many days
+                     background_window = 21, 
+                     
+                     # Parameters to control where/when you look
+                     test_ns = 1,
+                     test_gamma = -2,
+                     test_ra = np.pi/2,
+                     test_dec = np.pi/6, 
+                     
+                     minimize = True,
+                     gauss = True,
+                     spl = False,
+                     random_seed = None,
+                     verbose = True,
+                     ncpus = 4,
+                     nflares = 9):
+      
+    if random_seed:
+        np.random.seed(random_seed)
+
+    if background_window < 1:
+        print("WARN: Your window for estimating the backgroud rate is"
+              " {} and is less than 1 day. You may run into large"
+              " statistical uncertainties on the background rates which"
+              " may lead to unreliable trials. Increase your" 
+              " background_window to at least a day or a week to reduce"
+              " these issues.")
+    
+    # Build a place to store information for the trial
+    if gauss:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int), 
+                          ('ns', np.float64), 
+                          ('gamma', np.float64),
+                          ('t_mean', np.float64),
+                          ('t_sigma', np.float64)])
+    elif spl:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int),
+                          ('ns', np.float64),
+                          ('gamma', np.float64),
+                          ('t_start', np.float64),
+                          ('t_end', np.float64),
+                          ('t_offset', np.float64)])
+    else:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int), 
+                          ('ns', np.float64), 
+                          ('gamma', np.float64),
+                          ('t_start', np.float64),
+                          ('t_end', np.float64)])
+
+    # We're going to cache the signal weights, which will
+    # speed up our signal generation significantly. 
+    signal_weights = None
+    
+    global global_vars
+    global_vars = {}
+    global_vars.clear()
+    global_vars.update(locals())
+    
+    with multiprocessing.Pool(ncpus) as pool:
+        results = list(pool.imap(stacked_trial, range(ntrials)))
+        print(results)
+        return results
+    
+def stacked_trial(ntrials):
+    
+    N = global_vars['N']
+    gamma = global_vars['gamma']
+    t0 = global_vars['t0']
+    tw = global_vars['tw']
+    source_ra = global_vars['source_ra']
+    source_dec = global_vars['source_dec']
+    sampling_width = global_vars['sampling_width']
+    background_window = global_vars['background_window']
+    test_ns = global_vars['test_ns']
+    test_gamma = global_vars['test_gamma']
+    test_ra = global_vars['test_ra']
+    test_dec = global_vars['test_dec']
+    data = global_vars['data'] 
+    sim = global_vars['sim']
+    grl = global_vars['grl']
+    gamma_points = global_vars['gamma_points']
+    ratio_bins = global_vars['ratio_bins']
+    sob_maps = global_vars['sob_maps']
+    minimize = global_vars['minimize']
+    gauss = global_vars['gauss']
+    spl = global_vars['spl']
+    verbose = global_vars['verbose']
+    ncpus = global_vars['ncpus']
+    reduced_sim = global_vars['reduced_sim']
+    angular_window = global_vars['angular_window']
+    bg_p_dec = global_vars['bg_p_dec']
+    offset = global_vars['offset']
+    nflares = global_vars['nflares']
+    dtype = global_vars['dtype']
+    analysis_times = global_vars['analysis_times']
+    flux_spline = global_vars['flux_spline']
+    flux_weights = global_vars['flux_weights']
+    
+    fit_info = np.zeros(nflares, dtype = dtype)
+    
+    for i in range(0, nflares):
+        np.random.seed()
+        background_time_profile = uniform_profile(analysis_times['start'][i], analysis_times['end'][i])
+        signal_time_profile = spline_profile(flux_spline, analysis_times['start'][i], analysis_times['end'][i])
+        
+        if background_time_profile.effective_exposure() > background_window:
+            print("WARN: Going to estimate the background from a window"
+                  " of {} days, but producing a trial of {} days. Upscaling"
+                  " can be a bit dangerous, since you run the risk of missing"
+                  " impacts from seasonal fluctuations. Just keep it in mind"
+                  " as you run.")
+        
+        # Cut down the sim. We're going to be using the same
+        # source and weights each time, so this stops us from
+        # needing to recalculate over and over again.
+        reduced_sim = select_and_weight(N = N * flux_weights[i],
+                                        gamma = gamma,
+                                        source_ra = source_ra,
+                                        source_dec = source_dec,
+                                        time_profile = signal_time_profile,
+                                        sim = sim,
+                                        sampling_width = sampling_width,
+                                        )
+        
+        trial = produce_trial(data,
+                          reduced_sim,
+                          grl,
+                          N = N * flux_weights[i], 
+                          gamma = gamma, 
+                          source_ra = source_ra, 
+                          source_dec = source_dec, 
+                          background_time_profile = background_time_profile,
+                          signal_time_profile = signal_time_profile,
+                          sampling_width = sampling_width,
+                          background_window = background_window,
+                          random_seed = None,
+                          signal_weights = None, 
+                          return_signal_weights = False)
+    
+        keep = (np.abs(trial['ra'] - test_ra) <  angular_window) & (np.abs(trial['dec'] - test_dec) < angular_window)
+        trial = trial[keep]
+        
+        # And get the weights
+        if gauss:
+            bestfit = evaluate_ts_gauss(trial, 
+                                  test_ra, 
+                                  test_dec,
+                                  background_time_profile,
+                                  signal_time_profile,
+                                  gamma_points,
+                                  ratio_bins,
+                                  sob_maps,
+                                  bg_p_dec,
+                                  ns = test_ns,
+                                  gamma = test_gamma,
+                                  minimize = minimize,
+                                  )
+        elif spl:
+            bestfit = evaluate_ts_spline(trial, 
+                                  test_ra, 
+                                  test_dec,
+                                  background_time_profile,
+                                  signal_time_profile,
+                                  gamma_points,
+                                  ratio_bins,
+                                  sob_maps,
+                                  bg_p_dec,
+                                  ns = test_ns,
+                                  gamma = test_gamma,
+                                  offset = offset,
+                                  minimize = minimize
+                                  )
+        else:
+            bestfit = evaluate_ts_uniform(trial, 
+                                  test_ra, 
+                                  test_dec,
+                                  background_time_profile,
+                                  signal_time_profile,
+                                  gamma_points,
+                                  ratio_bins,
+                                  sob_maps,
+                                  bg_p_dec,
+                                  ns = test_ns,
+                                  gamma = test_gamma,
+                                  t0 = t0,
+                                  tw = tw,
+                                  minimize = minimize
+                                  )
+        fit_info[i]['ts'] = bestfit['ts']
+        fit_info[i]['ntot'] = len(trial)
+        fit_info[i]['ninj'] = (trial['run']>200000).sum()
+        fit_info[i]['ns'] = bestfit['ns']
+        fit_info[i]['gamma'] = bestfit['gamma']
+        if gauss:
+            fit_info[i]['t_mean'] = bestfit['t_mean']
+            fit_info[i]['t_sigma'] = bestfit['t_sigma']
+        elif spl:
+            fit_info[i]['t_start'] = bestfit['t_start']
+            fit_info[i]['t_end'] = bestfit['t_end']
+            fit_info[i]['t_offset'] = bestfit['t_offset']
+        else:
+            fit_info[i]['t_start'] = bestfit['t_start']
+            fit_info[i]['t_end'] = bestfit['t_end']
+            
+    ts = fit_info['ts']
+    ntot = fit_info['ntot']
+    ninj = fit_info['ninj']
+    ns = fit_info['ns']
+    gamma = fit_info['gamma']
+    
+    if gauss:
+        t_mean = fit_info['t_mean']
+        t_sigma = fit_info['t_sigma']
+        return ts, ntot, ninj, ns, gamma, t_mean, t_sigma
+    elif spl:
+        t_start = fit_info['t_start']
+        t_end = fit_info['t_end']
+        t_offset = fit_info['t_offset']
+        return ts, ntot, ninj, ns, gamma, t_start, t_end, t_offset
+    else:
+        t_start = fit_info['t_start']
+        t_end = fit_info['t_end']
+        return ts, ntot, ninj, ns, gamma, t_start, t_end       

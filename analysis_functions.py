@@ -1427,4 +1427,262 @@ def stacked_trial(ntrials):
     else:
         t_start = fit_info['t_start']
         t_end = fit_info['t_end']
-        return ts, ntot, ninj, ns, gamma, t_start, t_end       
+        return ts, ntot, ninj, ns, gamma, t_start, t_end
+    
+def unblinded_unstacked(flare,
+                     # Time profiles for signal/background generation
+                     background_time_profile,
+                     signal_time_profile,
+                     
+                     gamma_points,
+                     ratio_bins,
+                     sob_maps,
+                     data, 
+                     bg_p_dec,
+                     grl,
+                     
+                     # Signal flux parameters
+                     gamma = -2,
+                     t0 = 56102.5,
+                     tw = 1000.0/(3600.0 * 24),
+                     offset = 0,
+                     source_ra = np.pi/2, 
+                     source_dec = np.pi/6,  
+                     
+                     # Parameters to control where/when you look
+                     test_ns = 1,
+                     test_gamma = -2,
+                     test_ra = np.pi/2,
+                     test_dec = np.pi/6, 
+                     
+                     minimize = True,
+                     gauss = True,
+                     spl = False,
+                     ncpus = 4):
+    
+    # Build a place to store information for the trial
+    if gauss:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int), 
+                          ('ns', np.float64), 
+                          ('gamma', np.float64),
+                          ('t_mean', np.float64),
+                          ('t_sigma', np.float64)])
+    elif spl:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int),
+                          ('ns', np.float64),
+                          ('gamma', np.float64),
+                          ('t_start', np.float64),
+                          ('t_end', np.float64),
+                          ('t_offset', np.float64)])
+    else:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int), 
+                          ('ns', np.float64), 
+                          ('gamma', np.float64),
+                          ('t_start', np.float64),
+                          ('t_end', np.float64)])
+        
+    flare_start = background_time_profile.get_range()[0]
+    flare_end = background_time_profile.get_range()[1]
+    address = (data['time'] > flare_start) & (data['time'] < flare_end)
+    events = data[address]
+    
+    fit_info = np.array(1, dtype = dtype)
+    
+    if gauss:
+        bestfit = evaluate_ts_gauss(events, 
+                          test_ra, 
+                          test_dec,
+                          background_time_profile,
+                          signal_time_profile,
+                          gamma_points,
+                          ratio_bins,
+                          sob_maps,
+                          bg_p_dec,
+                          ns = test_ns,
+                          gamma = test_gamma,
+                          offset = offset,
+                          minimize = minimize)
+    elif spl:
+        bestfit = evaluate_ts_spline(events, 
+                          test_ra, 
+                          test_dec,
+                          background_time_profile,
+                          signal_time_profile,
+                          gamma_points,
+                          ratio_bins,
+                          sob_maps,
+                          bg_p_dec,
+                          ns = test_ns,
+                          gamma = test_gamma,
+                          offset = offset,
+                          minimize = minimize)
+    else:
+        bestfit = evaluate_ts_uniform(events, 
+                          test_ra, 
+                          test_dec,
+                          background_time_profile,
+                          signal_time_profile,
+                          gamma_points,
+                          ratio_bins,
+                          sob_maps,
+                          bg_p_dec,
+                          ns = test_ns,
+                          gamma = test_gamma,
+                          offset = offset,
+                          minimize = minimize)
+        
+    fit_info['ts'] = bestfit['ts']
+    fit_info['ntot'] = len(events)
+    fit_info['ninj'] = (events['run']>200000).sum()
+    fit_info['ns'] = bestfit['ns']
+    fit_info['gamma'] = bestfit['gamma']
+    
+    if gauss:
+        fit_info['t_mean'] = bestfit['t_mean']
+        fit_info['t_sigma'] = bestfit['t_sigma']
+    elif spl:
+        fit_info['t_start'] = bestfit['t_start']
+        fit_info['t_end'] = bestfit['t_end']
+        fit_info['t_offset'] = bestfit['t_offset']
+    else:
+        fit_info['t_start'] = bestfit['t_start']
+        fit_info['t_end'] = bestfit['t_end']
+    
+    return fit_info
+
+def unblinded_stacked(n_flares,
+                      analysis_times,
+                      flux_spline,
+                     
+                     gamma_points,
+                     ratio_bins,
+                     sob_maps,
+                     data,
+                     bg_p_dec,
+                     grl,
+                     
+                     # Signal flux parameters
+                     gamma = -2,
+                     t0 = 56102.5,
+                     tw = 1000.0/(3600.0 * 24),
+                     offset = 0,
+                     source_ra = np.pi/2, 
+                     source_dec = np.pi/6,
+                     
+                     # Parameters to control where/when you look
+                     test_ns = 1,
+                     test_gamma = -2,
+                     test_ra = np.pi/2,
+                     test_dec = np.pi/6, 
+                     
+                     minimize = True,
+                     gauss = True,
+                     spl = False,
+                     ncpus = 4):
+    
+    # Build a place to store information for the trial
+    if gauss:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int), 
+                          ('ns', np.float64), 
+                          ('gamma', np.float64),
+                          ('t_mean', np.float64),
+                          ('t_sigma', np.float64)])
+    elif spl:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int),
+                          ('ns', np.float64),
+                          ('gamma', np.float64),
+                          ('t_start', np.float64),
+                          ('t_end', np.float64),
+                          ('t_offset', np.float64)])
+    else:
+        dtype = np.dtype([('ts', np.float64),
+                          ('ntot', np.int),
+                          ('ninj', np.int), 
+                          ('ns', np.float64), 
+                          ('gamma', np.float64),
+                          ('t_start', np.float64),
+                          ('t_end', np.float64)])
+        
+    fit_info = np.zeros(n_flares, dtype = dtype)
+    
+    for i in range(0, n_flares):
+        flare_start = analysis_times[i]['start']
+        flare_end = analysis_times[i]['end']
+        background_time_profile = uniform_profile(flare_start, flare_end)
+        signal_time_profile = spline_profile(flux_spline, flare_start, flare_end)
+        
+        address = (data['time'] > flare_start) & (data['time'] < flare_end)
+        events = data[address]
+    
+    
+        if gauss:
+            bestfit = evaluate_ts_gauss(events, 
+                          test_ra, 
+                          test_dec,
+                          background_time_profile,
+                          signal_time_profile,
+                          gamma_points,
+                          ratio_bins,
+                          sob_maps,
+                          bg_p_dec,
+                          ns = test_ns,
+                          gamma = test_gamma,
+                          offset = offset,
+                          minimize = minimize)
+        elif spl:
+            bestfit = evaluate_ts_spline(events, 
+                          test_ra, 
+                          test_dec,
+                          background_time_profile,
+                          signal_time_profile,
+                          gamma_points,
+                          ratio_bins,
+                          sob_maps,
+                          bg_p_dec,
+                          ns = test_ns,
+                          gamma = test_gamma,
+                          offset = offset,
+                          minimize = minimize)
+        else:
+            bestfit = evaluate_ts_uniform(events, 
+                          test_ra, 
+                          test_dec,
+                          background_time_profile,
+                          signal_time_profile,
+                          gamma_points,
+                          ratio_bins,
+                          sob_maps,
+                          bg_p_dec,
+                          ns = test_ns,
+                          gamma = test_gamma,
+                          offset = offset,
+                          minimize = minimize)
+        
+        fit_info[i]['ts'] = bestfit['ts']
+        fit_info[i]['ntot'] = len(events)
+        fit_info[i]['ninj'] = (events['run']>200000).sum()
+        fit_info[i]['ns'] = bestfit['ns']
+        fit_info[i]['gamma'] = bestfit['gamma']
+    
+        if gauss:
+            fit_info[i]['t_mean'] = bestfit['t_mean']
+            fit_info[i]['t_sigma'] = bestfit['t_sigma']
+        elif spl:
+            fit_info[i]['t_start'] = bestfit['t_start']
+            fit_info[i]['t_end'] = bestfit['t_end']
+            fit_info[i]['t_offset'] = bestfit['t_offset']
+        else:
+            fit_info[i]['t_start'] = bestfit['t_start']
+            fit_info[i]['t_end'] = bestfit['t_end']
+    
+    return fit_info

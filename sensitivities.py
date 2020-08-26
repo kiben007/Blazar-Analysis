@@ -129,11 +129,11 @@ for i in range(0, n_flares):
     ax1.vlines(unblinded_ts, 0, 1E3, color = 'b', linewidth = 3, linestyle = '--', label = 'measured TS value')
     ax1.set_xlabel('TS')
     ax1.set_ylabel('counts')
-    ax1.set_title('P-value for 3C454.3 flare between MJD ' + str(analysis_times['start'][i]) + ' and ' + str(analysis_times['end'][i]))
+    ax1.set_title('P-value = ' + str(p_value_unstacked) + ' for 3C454.3 flare between MJD ' + str(analysis_times['start'][i]) + ' and ' + str(analysis_times['end'][i]))
     ax1.legend()
-    ax1.set_xscale('log')
+    ax1.set_yscale('log')
 
-    fig1.savefig(outdir + '/Unblinded_plots_test/p-value_flare_' + str(i) + '_test.png')
+    fig1.savefig(outdir + '/Unblinding_plots_test/p-value_flare_' + str(i) + '_test.png')
     
     perc = np.zeros(len(N_vals))
 
@@ -154,7 +154,7 @@ for i in range(0, n_flares):
     ax2.set_title('Spline estimate for upper limit')
     ax2.set_xscale('log')
 
-    fig2.savefig(outdir + '/Unblinded_plots_test/spline_flare_' + str(i) + '_unblinded_test.png')
+    fig2.savefig(outdir + '/Unblinding_plots_test/spline_flare_' + str(i) + '_unblinded_test.png')
     
     add = (analysis_spl(plot_vals) >= 0.9)
     flux = plot_vals[add][0]
@@ -230,16 +230,16 @@ ax4.hist(greater_than_data,
 ax4.vlines(unblinded_ts, 0, 1E3, color = 'b', linewidth = 3, linestyle = '--', label = 'measured TS value')
 ax4.set_xlabel('TS')
 ax4.set_ylabel('counts')
-ax4.set_title('Stacked P-value for 3C454.3 subflares')
+ax4.set_title('Stacked P-value = ' + str(p_value_stacked) + ' for 3C454.3 subflares')
 ax4.legend()
-ax4.set_xscale('log')
+ax4.set_yscale('log')
 
-fig4.savefig(outdir + '/Unblinded_plots_test/p-value_stacked_test.png')
+fig4.savefig(outdir + '/Unblinding_plots_test/p-value_stacked_test.png')
 
 perc = np.zeros(len(N_vals))
 
 for j in range(0, len(N_vals)):
-    signal_array = np.load(outdir + '/stacked_outputs_final/analysis_job_' + str(j) + 'stacked_peak.npy') #using the peak because I wrote the weighting function wrong
+    signal_array = np.load(outdir + '/stacked_outputs_final/analysis_job_' + str(j) + '_stacked_peak.npy') #using the peak because I wrote the weighting function wrong
     signal_ts_analysis = signal_array['ts']
     perc[j] = len(signal_ts_analysis[signal_ts_analysis > unblinded_ts])/len(signal_ts_analysis)
         
@@ -255,7 +255,7 @@ ax5.set_ylabel('Percentage of signal over measured TS value')
 ax5.set_title('Spline estimate for stacked upper limit')
 ax5.set_xscale('log')
 
-fig5.savefig(outdir + '/Unblinded_plots_test/spline_stacked_unblinded_test.png')
+fig5.savefig(outdir + '/Unblinding_plots_test/spline_stacked_unblinded_test.png')
 
 add = (analysis_spl(plot_vals) >= 0.9)
 flux = plot_vals[add][0]

@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os, sys, glob, abc
 import numpy as np, matplotlib, scipy, time
 from astropy.io import fits
@@ -12,6 +14,14 @@ import analysis_functions
 
 indir = '/data/i3store/users/mjlarson/ps_tracks/'
 outdir = '/data/condor_builds/users/bbrinson/blazar'
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-N", "--number", help = "number of trials", default = 1000, type = int)
+parser.add_argument("-J", "--job", help = "job number", default = 0, type = int)
+options = parser.parse_args()
+
+number = options.number
+job = options.job
 
 data_files = indir + "/IC86_*exp.npy"
 dfiles = glob.glob(data_files)
@@ -62,12 +72,10 @@ analysis_times = np.load(outdir + '/prereqs/analysis_times.npy')
 N_vals = np.logspace(-19, -16, 20)
 plot_vals = np.logspace(-19, -16, 1000)
 
-print('starting')
-
-for i in range(0, n_flares):
+if job < 9:
     
-    background_time_profile = analysis_functions.uniform_profile(analysis_times['start'][i], analysis_times['end'][i])
-    signal_time_profile = analysis_functions.spline_profile(flux_spline, analysis_times['start'][i], analysis_times['end'][i])
+    background_time_profile = analysis_functions.uniform_profile(analysis_times['start'][job], analysis_times['end'][job])
+    signal_time_profile = analysis_functions.spline_profile(flux_spline, analysis_times['start'][job], analysis_times['end'][job])
 
     args = {"gamma_points":gamma_points,
         "ratio_bins":ratio_bins,
@@ -89,9 +97,9 @@ for i in range(0, n_flares):
         "ncpus":4,
         "angular_window":np.radians(180)}
     
-    background_ts_analysis = np.load(outdir + '/background_profiles_unstacked/background_ts_' + str(i) + '.npy')
+    background_ts_analysis = np.load(outdir + '/background_profiles_unstacked/background_ts_' + str(job) + '.npy')
     
-    unblinded_values = np.load(outdir + '/Unblinding_test/flare_' + str(i) + '_unblinded_test.npy')
+    unblinded_values = np.load(outdir + '/Unblinding_test/flare_' + str(job) + '_unblinded_test.npy')
     
     unblinded_ts = unblinded_values['ts']
     
@@ -100,9 +108,10 @@ for i in range(0, n_flares):
     greater_than_data = background_ts_analysis[greater_add]
     
     p_value_unstacked = len(greater_than_data)/len(background_ts_analysis)
+    
     p_value_array = np.array([p_value_unstacked])
     
-    np.save(outdir + '/Unblinding_limits_test/p-value_flare_' + str(i) + 'test_.npy', p_value_array)
+    np.save(outdir + '/Unblinding_limits_test/p-value_flare_' + str(job) + 'test_.npy', p_value_array)
     
     fig1, ax1 = plt.subplots(figsize=(10,6))
 
@@ -129,37 +138,48 @@ for i in range(0, n_flares):
     ax1.vlines(unblinded_ts, 0, 1E3, color = 'b', linewidth = 3, linestyle = '--', label = 'measured TS value')
     ax1.set_xlabel('TS')
     ax1.set_ylabel('counts')
-    ax1.set_title('P-value = ' + str(p_value_unstacked) + ' for 3C454.3 flare between MJD ' + str(analysis_times['start'][i]) + ' and ' + str(analysis_times['end'][i]))
+    ax1.set_title('P-value = ' + str(p_value_unstacked) + ' for 3C454.3 flare between MJD ' + str(analysis_times['start'][job]) + ' and ' + str(analysis_times['end'][job]))
     ax1.legend()
     ax1.set_yscale('log')
 
-    fig1.savefig(outdir + '/Unblinding_plots_test/p-value_flare_' + str(i) + '_test.png')
+    fig1.savefig(outdir + '/Unblinding_plots_test/p-value_flare_' + str(job) + '_test.png')
     
     perc = np.zeros(len(N_vals))
+    perc_sens = np.zeros(len(N_vals))
 
     for j in range(0, len(N_vals)):
-        signal_array = np.load(outdir + '/sensitivity_data_offset/analysis_job_' + str(j) + '_flare_' + str(i) + '_offset.npy')
+        signal_array = np.load(outdir + '/sensitivity_data_offset/analysis_job_' + str(j) + '_flare_' + str(job) + '_offset.npy')
         signal_ts_analysis = signal_array['ts']
         perc[j] = len(signal_ts_analysis[signal_ts_analysis > unblinded_ts])/len(signal_ts_analysis)
+        perc_sens[j] = len(signal_ts_analysis[signal_ts_analysis > np.percentile(background_ts_analysis, 50)])/len(signal_ts_analysis)
         
     analysis_spl = interpolate.UnivariateSpline(N_vals, perc, s = 5E-4)
+    sens_spl = interpolate.UnivariateSpline(N_vals, perc_sens, s = 5E-4)
+    
+    sens_add = (sens_spl(plot_vals) >= 0.9)
+    sensitivity = plot_vals[sens_add][0]
+        
+    y_vals = np.append(perc, 0.9)
+    y_min = y_vals.min()
     
     fig2, ax2 = plt.subplots(figsize=(10,6))
 
-    ax2.plot(N_vals, perc, '.', color = 'b')
-    ax2.plot(plot_vals, analysis_spl(plot_vals), linewidth = 2, color = 'r')
-    ax2.hlines(0.9, 1E-19, 1E-16)
+    ax2.plot(N_vals, perc, '.', color = 'b', label = 'trial distributions')
+    ax2.plot(plot_vals, analysis_spl(plot_vals), linewidth = 2, color = 'r', label = 'spline of trial distributions')
+    ax2.hlines(0.9, 1E-19, 1E-16, label = '90% line')
+    ax2.vlines(sensitivity, y_min, 1, linewidth = 2, linestyle = '--', color = 'g', label = 'sensitivity')
     ax2.set_xlabel('Flux normalization N (GeV^-1 cm^-2 s^-1)')
     ax2.set_ylabel('Percentage of signal over measured TS value')
     ax2.set_title('Spline estimate for upper limit')
+    ax2.legend()
     ax2.set_xscale('log')
 
-    fig2.savefig(outdir + '/Unblinding_plots_test/spline_flare_' + str(i) + '_unblinded_test.png')
+    fig2.savefig(outdir + '/Unblinding_plots_test/spline_flare_' + str(job) + '_unblinded_test.png')
     
     add = (analysis_spl(plot_vals) >= 0.9)
     flux = plot_vals[add][0]
     
-    analysis_spline_fits = analysis_functions.produce_trials_multi(1000, N = flux, **args)
+    analysis_spline_fits = analysis_functions.produce_trials_multi(number, N = flux, **args)
     
     spline_ts = np.array(analysis_spline_fits['ts'])
     
@@ -182,36 +202,36 @@ for i in range(0, n_flares):
     ax3.set_ylabel('counts')
     ax3.legend()
     ax3.set_yscale('log')
-    ax3.set_title(r'Flux Upper Limit for 3C454.3 flare between MJD ' + str(analysis_times['start'][i]) + ' and ' + str(analysis_times['end'][i]))
+    ax3.set_title(r'Flux Upper Limit for 3C454.3 flare between MJD ' + str(analysis_times['start'][job]) + ' and ' + str(analysis_times['end'][job]))
     
-    fig3.savefig(outdir + '/Unblinding_plots_test/ul_flare_' + str(i) + '_test.png')
+    fig3.savefig(outdir + '/Unblinding_plots_test/ul_flare_' + str(job) + '_test.png')
     
-    np.save(outdir + '/Unblinding_limits_test/ul_flare_' + str(i) + '_ts_test.npy', spline_ts)
+    np.save(outdir + '/Unblinding_limits_test/ul_flare_' + str(job) + '_ts_test.npy', spline_ts)
     
-    print(str(i))
-    
-background_ts_analysis = np.load(outdir + '/background_profiles_stacked/background_ts_scheme_peak.npy')#using peak because I wrote the weighting function wrong
-    
-unblinded_values = np.load(outdir + '/Unblinding_test/stacked_unblinded_test.npy')
-    
-unblinded_ts = unblinded_values['ts']
-    
-greater_add = (background_ts_analysis >= unblinded_ts)
-    
-greater_than_data = background_ts_analysis[greater_add]
-    
-p_value_stacked = len(greater_than_data)/len(background_ts_analysis)
-p_value_array = np.array([p_value_stacked])
-    
-np.save(outdir + '/Unblinding_limits_test/p-value_stacked_test_.npy', p_value_array)
+else:
 
-fig4, ax4 = plt.subplots(figsize=(10,6))
-
-full = np.concatenate([background_ts_analysis])
-xmin, xmax = full.min(), full.max()
-plot_bins = np.linspace(xmin, xmax, 50)
+    background_ts_analysis = np.load(outdir + '/background_profiles_stacked/background_ts_scheme_peak.npy')#using peak because I wrote the weighting function wrong
     
-ax4.hist(background_ts_analysis,
+    unblinded_values = np.load(outdir + '/Unblinding_test/stacked_unblinded_test.npy')
+
+    unblinded_ts = np.sum(unblinded_values['ts'])
+
+    greater_add = (background_ts_analysis >= unblinded_ts)
+    
+    greater_than_data = background_ts_analysis[greater_add]
+    
+    p_value_stacked = len(greater_than_data)/len(background_ts_analysis)
+    p_value_array = np.array([p_value_stacked])
+    
+    np.save(outdir + '/Unblinding_limits_test/p-value_stacked_test_.npy', p_value_array)
+
+    fig4, ax4 = plt.subplots(figsize=(10,6))
+
+    full = np.concatenate([background_ts_analysis])
+    xmin, xmax = full.min(), full.max()
+    plot_bins = np.linspace(xmin, xmax, 50)
+    
+    ax4.hist(background_ts_analysis,
             bins = plot_bins,
             histtype = 'step',
             color = 'k',
@@ -219,7 +239,7 @@ ax4.hist(background_ts_analysis,
             alpha=0.5,
             label = 'Background TS distribution')
     
-ax4.hist(greater_than_data,
+    ax4.hist(greater_than_data,
             bins = plot_bins,
             histtype = 'step',
             color = 'r',
@@ -227,42 +247,52 @@ ax4.hist(greater_than_data,
             alpha=0.5,
             label = 'Background above measured TS value')
     
-ax4.vlines(unblinded_ts, 0, 1E3, color = 'b', linewidth = 3, linestyle = '--', label = 'measured TS value')
-ax4.set_xlabel('TS')
-ax4.set_ylabel('counts')
-ax4.set_title('Stacked P-value = ' + str(p_value_stacked) + ' for 3C454.3 subflares')
-ax4.legend()
-ax4.set_yscale('log')
+    ax4.vlines(unblinded_ts, 0, 1E3, color = 'b', linewidth = 3, linestyle = '--', label = 'measured TS value')
+    ax4.set_xlabel('TS')
+    ax4.set_ylabel('counts')
+    ax4.set_title('Stacked P-value = ' + str(p_value_stacked) + ' for 3C454.3 subflares')
+    ax4.legend()
+    ax4.set_yscale('log')
 
-fig4.savefig(outdir + '/Unblinding_plots_test/p-value_stacked_test.png')
+    fig4.savefig(outdir + '/Unblinding_plots_test/p-value_stacked_test.png')
 
-perc = np.zeros(len(N_vals))
+    perc = np.zeros(len(N_vals))
+    perc_sens = np.zeros(len(N_vals))
 
-for j in range(0, len(N_vals)):
-    signal_array = np.load(outdir + '/stacked_outputs_final/analysis_job_' + str(j) + '_stacked_peak.npy') #using the peak because I wrote the weighting function wrong
-    signal_ts_analysis = signal_array['ts']
-    perc[j] = len(signal_ts_analysis[signal_ts_analysis > unblinded_ts])/len(signal_ts_analysis)
+    for j in range(0, len(N_vals)):
+        signal_ts_analysis = np.load(outdir + '/stacked_outputs_final/analysis_job_' + str(j) + '_stacked_peak.npy') #using the peak because I wrote the weighting function wrong
+        perc[j] = len(signal_ts_analysis[signal_ts_analysis > unblinded_ts])/len(signal_ts_analysis)
+        perc_sens[j] = len(signal_ts_analysis[signal_ts_analysis > np.percentile(background_ts_analysis, 50)])/len(signal_ts_analysis)
         
-analysis_spl = interpolate.UnivariateSpline(N_vals, perc, s = 5E-4)
+    analysis_spl = interpolate.UnivariateSpline(N_vals, perc, s = 5E-4)
+    sens_spl = interpolate.UnivariateSpline(N_vals, perc_sens, s = 5E-4)
     
-fig5, ax5 = plt.subplots(figsize=(10,6))
+    sens_add = (sens_spl(plot_vals) > 0.9)
+    sensitivity = plot_vals[sens_add][0]
+    
+    y_vals = np.append(perc, 0.9)
+    y_min = y_vals.min()
+    
+    fig5, ax5 = plt.subplots(figsize=(10,6))
 
-ax5.plot(N_vals, perc, '.', color = 'b')
-ax5.plot(plot_vals, analysis_spl(plot_vals), linewidth = 2, color = 'r')
-ax5.hlines(0.9, 1E-19, 1E-16)
-ax5.set_xlabel('Flux normalization N (GeV^-1 cm^-2 s^-1)')
-ax5.set_ylabel('Percentage of signal over measured TS value')
-ax5.set_title('Spline estimate for stacked upper limit')
-ax5.set_xscale('log')
+    ax5.plot(N_vals, perc, '.', color = 'b', label = 'trial distributions')
+    ax5.plot(plot_vals, analysis_spl(plot_vals), linewidth = 2, color = 'r', label = 'spline of trial distributions')
+    ax5.hlines(0.9, 1E-19, 1E-16, label = '90% line')
+    ax5.vlines(sensitivity, y_min, 1, linewidth = 2, linestyle = '--', color = 'g', label = 'sensitivity')
+    ax5.set_xlabel('Flux normalization N (GeV^-1 cm^-2 s^-1)')
+    ax5.set_ylabel('Percentage of signal over measured TS value')
+    ax5.set_title('Spline estimate for stacked upper limit')
+    ax5.legend()
+    ax5.set_xscale('log')
 
-fig5.savefig(outdir + '/Unblinding_plots_test/spline_stacked_unblinded_test.png')
+    fig5.savefig(outdir + '/Unblinding_plots_test/spline_stacked_unblinded_test.png')
 
-add = (analysis_spl(plot_vals) >= 0.9)
-flux = plot_vals[add][0]
+    add = (analysis_spl(plot_vals) >= 0.9)
+    flux = plot_vals[add][0]
 
-flux_weights = analysis_functions.produce_flux(analysis_times, flux_spline, 2) #we're going with 2 because I wrote the weighting function wrong
+    flux_weights = analysis_functions.produce_flux(analysis_times, flux_spline, 2) #we're going with 2 because I wrote the weighting function wrong
 
-args = {"gamma_points":gamma_points,
+    args = {"gamma_points":gamma_points,
         "ratio_bins":ratio_bins,
         "sob_maps":sob_maps,
         "data":data, 
@@ -283,19 +313,19 @@ args = {"gamma_points":gamma_points,
         "ncpus":4,
         "angular_window":np.radians(180)}
 
-analysis_spline_fits = analysis_functions.produce_trials_stacked(number, N = flux, **args)
+    analysis_spline_fits = analysis_functions.produce_trials_stacked(number, N = flux, **args)
 
-spline_ts = np.zeros(number)
-for i in range(0, number):
-    spline_ts[i] = sum(analysis_spline_fits[i][0])
+    spline_ts = np.zeros(number)
+    for i in range(0, number):
+        spline_ts[i] = sum(analysis_spline_fits[i][0])
     
-full = np.concatenate([spline_ts])
-xmin, xmax = full.min(), full.max()
-plot_bins = np.linspace(xmin, xmax, 50)
+    full = np.concatenate([spline_ts])
+    xmin, xmax = full.min(), full.max()
+    plot_bins = np.linspace(xmin, xmax, 50)
 
-fig6, ax6 = plt.subplots(figsize=(10,6))
+    fig6, ax6 = plt.subplots(figsize=(10,6))
     
-ax6.hist(spline_ts,
+    ax6.hist(spline_ts,
             bins = plot_bins,
             histtype = 'step',
             linewidth = 3,
@@ -303,13 +333,13 @@ ax6.hist(spline_ts,
             color = 'r',
             label = 'N = ' + str(flux) + ' GeV^-1 cm^-2 s^-1')
     
-ax6.vlines(unblinded_ts, 0, 1E3, color = 'k', linewidth = 3, linestyle = '--', label = 'Measured TS value')
-ax6.set_xlabel('TS')
-ax6.set_ylabel('counts')
-ax6.legend()
-ax6.set_yscale('log')
-ax6.set_title(r'Flux Upper Limit for 3C454.3 Stacked Search')
+    ax6.vlines(unblinded_ts, 0, 1E3, color = 'k', linewidth = 3, linestyle = '--', label = 'Measured TS value')
+    ax6.set_xlabel('TS')
+    ax6.set_ylabel('counts')
+    ax6.legend()
+    ax6.set_yscale('log')
+    ax6.set_title(r'Flux Upper Limit for 3C454.3 Stacked Search')
     
-fig6.savefig(outdir + '/Unblinding_plots_test/ul_flare_stacked_test.png')
+    fig6.savefig(outdir + '/Unblinding_plots_test/ul_flare_stacked_test.png')
 
-np.save(outdir + '/Unblinding_limits_test/ul_flare_stacked_ts_test.npy', spline_ts)
+    np.save(outdir + '/Unblinding_limits_test/ul_flare_stacked_ts_test.npy', spline_ts)
